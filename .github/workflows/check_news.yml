@@ -1,4 +1,4 @@
-name: Check Monster Strike News
+name: 怪物彈珠公告通知
 
 on:
   schedule:
