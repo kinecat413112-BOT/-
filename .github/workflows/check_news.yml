@@ -1,0 +1,40 @@
+name: Check Monster Strike News
+
+on:
+  schedule:
+    # 每 10 分鐘自動執行一次
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # 支援手動觸發測試
+
+jobs:
+  check-news:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4
+
+      - name: Run scraper
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: python main.py
+
+      - name: Commit and push if changed
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add last_news.json
+          git commit -m "Update last news cache" || exit 0
+          git push
