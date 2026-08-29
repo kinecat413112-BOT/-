@@ -51,16 +51,18 @@ def fetch_news():
         if image_url and not image_url.startswith("http"):
             image_url = f"https://www.monster-strike.com.tw{image_url}"
 
-    # 3. 取得完整文章標題
-    title = link_tag.get_text(strip=True)
-    if not title and img_tag:
-        title = img_tag.get("alt", "")
+    # 3. 取得文章標題並清理雜訊 (去除 CHECK, NEW, 日期等標籤)
+    raw_title = link_tag.get_text(strip=True)
+    if not raw_title and img_tag:
+        raw_title = img_tag.get("alt", "")
     
-    title = re.sub(r"\s+", " ", title).strip()
-    if not title:
-        title = "怪物彈珠最新公告"
+    clean_title = re.sub(r"CHECK|NEW|\d{4}\.\d{2}\.\d{2}|活動|重要|維護", "", raw_title)
+    clean_title = re.sub(r"\s+", " ", clean_title).strip()
+    
+    if not clean_title:
+        clean_title = "怪物彈珠最新公告"
 
-    return {"title": title, "link": link, "image_url": image_url}
+    return {"title": clean_title, "link": link, "image_url": image_url}
 
 
 def get_last_news():
@@ -87,7 +89,8 @@ def send_discord(title, link, image_url):
         embed["image"] = {"url": image_url}
 
     payload = {
-        "content": "【怪物彈珠最新公告】",
+        # 讓卡片外面的訊息文字直接同步帶入「最新公告標題」
+        "content": f"【怪物彈珠】{title}",
         "embeds": [embed],
     }
     requests.post(WEBHOOK_URL, json=payload)
