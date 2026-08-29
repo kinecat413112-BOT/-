@@ -89,20 +89,30 @@ def fetch_tw_news():
         return None
 
 
-# --- 2. 日版 GameWith（僅抓取「注目の最新イベント」前兩格超究極）---
+# --- 2. 日版 GameWith（精準抓取「注目の最新イベント」前兩格與圖示）---
 def fetch_gw_events():
     try:
         res = requests.get(GW_URL, headers=HEADERS, timeout=10)
         res.encoding = "utf-8"
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # 精準定位「注目の最新イベント」標題旁的表格
         items = []
         for a in soup.select("table a[href*='/article/show/']"):
             title = a.get_text(strip=True)
             link = a.get("href", "")
             img = a.select_one("img")
-            img_url = img.get("src") if img else ""
+
+            img_url = ""
+            if img:
+                # 兼容 GameWith 延遲載入圖片屬性
+                img_url = (
+                    img.get("src")
+                    or img.get("data-original")
+                    or img.get("data-src")
+                    or ""
+                )
+                if img_url and not img_url.startswith("http"):
+                    img_url = f"https:{img_url}" if img_url.startswith("//") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{img_url}"
 
             if title and link:
                 items.append(
@@ -112,7 +122,7 @@ def fetch_gw_events():
         if not items:
             return []
 
-        # 僅取前 2 個項目（即超究極卡片）
+        # 僅取前 2 個超究極項目
         top_2_items = items[:2]
         results = []
         for item in top_2_items:
@@ -157,7 +167,11 @@ def send_discord(data):
         embed["description"] = data["summary"]
 
     if data.get("image_url"):
-        embed["image"] = {"url": data["image_url"]}
+        # 台版使用底圖大圖 (image)，日版 GameWith 角色頭像使用右上方小圖 (thumbnail)
+        if data["type"] == "TW":
+            embed["image"] = {"url": data["image_url"]}
+        else:
+            embed["thumbnail"] = {"url": data["image_url"]}
 
     payload = {
         "content": data["title"],
@@ -181,7 +195,6 @@ if __name__ == "__main__":
     gw_cache = cache.get("GW", [])
     current_gw_links = [item["link"] for item in gw_list]
 
-    # 比對是否有新的超究極連結
     for gw_data in gw_list:
         if gw_data["link"] not in gw_cache:
             send_discord(gw_data)
