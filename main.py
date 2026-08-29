@@ -89,69 +89,79 @@ def fetch_tw_news():
         return None
 
 
-# --- 2. 日版 GameWith（抓前兩格超究極，並點進內文抓頂部大圖）---
+# --- 2. 日版 GameWith（精準抓取「ランキング / 攻略記事」前 2 名圖片與連結）---
 def fetch_gw_events():
     try:
         res = requests.get(GW_URL, headers=HEADERS, timeout=10)
         res.encoding = "utf-8"
         soup = BeautifulSoup(res.text, "html.parser")
 
-        items = []
-        for a in soup.select("table a[href*='/article/show/']"):
-            title = a.get_text(strip=True)
-            link = a.get("href", "")
-
-            if title and link:
-                items.append({"title": title, "link": link})
-
-        if not items:
-            return []
-
-        # 僅取前 2 個超究極項目
-        top_2_items = items[:2]
+        # 定位排行榜 (ランキング) 內的文章列表
         results = []
+        rank_items = soup.select(
+            ".g-ranking-list li, .p-ranking__item, .g-ranking_list li"
+        )
 
-        for item in top_2_items:
-            detail_img_url = ""
-            # 點進文章內頁抓取頂部關卡大圖
-            try:
-                d_res = requests.get(item["link"], headers=HEADERS, timeout=10)
-                d_res.encoding = "utf-8"
-                d_soup = BeautifulSoup(d_res.text, "html.parser")
-
-                # 尋找文章主體第一張圖片 (通常是關卡主圖)
-                img = d_soup.select_one(
-                    ".g-article-img img, .article-body img, #article-body img"
-                )
-                if img:
-                    detail_img_url = (
-                        img.get("src")
-                        or img.get("data-original")
+        # 備用選擇器：若主要排行榜結構變動，尋找含 article/show 且有縮圖的連結
+        if not rank_items:
+            for a in soup.select("a[href*='/article/show/']"):
+                img = a.select_one("img")
+                if img and a.get_text(strip=True):
+                    title = a.get_text(strip=True)
+                    link = a.get("href", "")
+                    img_url = (
+                        img.get("data-original")
                         or img.get("data-src")
+                        or img.get("src")
                         or ""
                     )
-                    if detail_img_url and not detail_img_url.startswith("http"):
-                        detail_img_url = (
-                            f"https:{detail_img_url}"
-                            if detail_img_url.startswith("//")
-                            else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{detail_img_url}"
-                        )
-            except Exception as e:
-                print(f"進入 GameWith 內頁抓圖片失敗: {e}")
+                    if img_url and not img_url.startswith("http"):
+                        img_url = f"https:{img_url}" if img_url.startswith("//") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{img_url}"
+                    
+                    results.append({
+                        "type": "GW",
+                        "title": f"【日版 GameWith 攻略】{title}",
+                        "link": link,
+                        "image_url": img_url,
+                        "summary": f"攻略人氣排行榜熱門關卡：{title}",
+                    })
+                    if len(results) >= 2:
+                        break
+            return results
 
-            results.append(
-                {
-                    "type": "GW",
-                    "title": f"【日版 GameWith 攻略】{item['title']}",
-                    "link": item["link"],
-                    "image_url": detail_img_url,
-                    "summary": f"超究極關卡攻略頁面：{item['title']}",
-                }
-            )
+        # 標準排行榜解析 (前 2 名)
+        for item in rank_items[:2]:
+            a_tag = item.select_one("a[href*='/article/show/']")
+            img_tag = item.select_one("img")
+
+            if a_tag:
+                title = a_tag.get_text(strip=True)
+                link = a_tag.get("href", "")
+
+                img_url = ""
+                if img_tag:
+                    img_url = (
+                        img_tag.get("data-original")
+                        or img_tag.get("data-src")
+                        or img_tag.get("src")
+                        or ""
+                    )
+                    if img_url and not img_url.startswith("http"):
+                        img_url = f"https:{img_url}" if img_url.startswith("//") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{img_url}"
+
+                results.append(
+                    {
+                        "type": "GW",
+                        "title": f"【日版 GameWith 攻略】{title}",
+                        "link": link,
+                        "image_url": img_url,
+                        "summary": f"攻略人氣排行榜熱門關卡：{title}",
+                    }
+                )
 
         return results
     except Exception as e:
-        print(f"日版 GameWith 抓取失敗: {e}")
+        print(f"日版 GameWith 排行榜抓取失敗: {e}")
         return []
 
 
@@ -179,7 +189,6 @@ def send_discord(data):
     if data.get("summary"):
         embed["description"] = data["summary"]
 
-    # 統一使用 Image (大圖模式展示)
     if data.get("image_url"):
         embed["image"] = {"url": data["image_url"]}
 
@@ -200,7 +209,7 @@ if __name__ == "__main__":
         cache["TW"] = tw_data["link"]
         print("台版最新公告推播成功！")
 
-    # 2. 檢查日版（前兩格超究極，抓取內頁大圖）
+    # 2. 檢查日版（排行榜前 2 名）
     gw_list = fetch_gw_events()
     gw_cache = cache.get("GW", [])
     current_gw_links = [item["link"] for item in gw_list]
@@ -208,7 +217,7 @@ if __name__ == "__main__":
     for gw_data in gw_list:
         if gw_data["link"] not in gw_cache:
             send_discord(gw_data)
-            print(f"日版推播成功: {gw_data['title']}")
+            print(f"日版排行榜推播成功: {gw_data['title']}")
 
     cache["GW"] = current_gw_links
     save_cache(cache)
