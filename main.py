@@ -20,10 +20,9 @@ def fetch_news():
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # 精準定位新聞列表區塊中的第一篇文章
+    # 定位新聞列表區塊中的第一篇文章
     article = soup.select_one(".news_list_item, .newsList_item, article, .p-newsList__item")
     
-    # 備用方案：尋找帶有 html 檔名且包含圖片的內頁連結
     if not article:
         for a in soup.select("a[href*='/news/']"):
             href = a.get("href", "")
@@ -43,7 +42,7 @@ def fetch_news():
     if link and not link.startswith("http"):
         link = f"https://www.monster-strike.com.tw{link}"
 
-    # 2. 取得大圖網址
+    # 2. 取得列表縮圖
     image_url = ""
     img_tag = article.select_one("img")
     if img_tag:
@@ -51,7 +50,7 @@ def fetch_news():
         if image_url and not image_url.startswith("http"):
             image_url = f"https://www.monster-strike.com.tw{image_url}"
 
-    # 3. 取得文章標題並清理雜訊 (去除 CHECK, NEW, 日期等標籤)
+    # 3. 取得文章標題並清理雜訊
     raw_title = link_tag.get_text(strip=True)
     if not raw_title and img_tag:
         raw_title = img_tag.get("alt", "")
@@ -62,7 +61,29 @@ def fetch_news():
     if not clean_title:
         clean_title = "怪物彈珠最新公告"
 
-    return {"title": clean_title, "link": link, "image_url": image_url}
+    # 4. 點進公告內文抓取簡介大綱 (前 150 字)
+    summary = ""
+    try:
+        detail_res = requests.get(link, headers=headers)
+        detail_res.encoding = "utf-8"
+        detail_soup = BeautifulSoup(detail_res.text, "html.parser")
+        
+        # 抓取內文的主要段落 (p 標籤)
+        paragraphs = detail_soup.select("main p, .article_body p, .news_detail p, #main p")
+        text_list = []
+        for p in paragraphs:
+            text = p.get_text().strip()
+            # 過濾掉空白或太短的裝飾字
+            if text and len(text) > 5 and "monster-strike" not in text:
+                text_list.append(text)
+            if len("\n".join(text_list)) >= 150:
+                break
+        
+        summary = "\n".join(text_list)[:200]  # 限制最大字數在大綱長度
+    except Exception as e:
+        print(f"抓取內文大綱失敗: {e}")
+
+    return {"title": clean_title, "link": link, "image_url": image_url, "summary": summary}
 
 
 def get_last_news():
@@ -77,12 +98,16 @@ def save_last_news(data):
         json.dump(data, f, ensure_ascii=False)
 
 
-def send_discord(title, link, image_url):
+def send_discord(title, link, image_url, summary):
     embed = {
         "title": title,
         "url": link,
         "color": 5814783
     }
+
+    # 如果有抓到內文大綱，放入 description 欄位
+    if summary:
+        embed["description"] = summary
 
     if image_url:
         embed["image"] = {"url": image_url}
@@ -103,8 +128,9 @@ if __name__ == "__main__":
                 current_news["title"],
                 current_news["link"],
                 current_news.get("image_url", ""),
+                current_news.get("summary", ""),
             )
             save_last_news(current_news)
-            print("發送極簡版公告成功！")
+            print("發送帶內文大綱之公告成功！")
         else:
             print("沒有新公告。")
