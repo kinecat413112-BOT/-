@@ -5,132 +5,178 @@ import requests
 from bs4 import BeautifulSoup
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
-TARGET_URL = "https://www.monster-strike.com.tw/news/"
+TW_URL = "https://www.monster-strike.com.tw/news/"
+GW_URL = "https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp/"
 CACHE_FILE = "last_news.json"
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    )
+}
 
-def fetch_news():
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        )
-    }
-    response = requests.get(TARGET_URL, headers=headers)
-    response.encoding = "utf-8"
 
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    # 定位新聞列表區塊中的第一篇文章
-    article = soup.select_one(".news_list_item, .newsList_item, article, .p-newsList__item")
-    
-    if not article:
-        for a in soup.select("a[href*='/news/']"):
-            href = a.get("href", "")
-            if href.endswith(".html") and a.select_one("img"):
-                article = a
-                break
-
-    if not article:
-        return None
-
-    # 1. 取得連結
-    link_tag = article if article.name == "a" else article.select_one("a[href*='/news/']")
-    if not link_tag:
-        return None
-    
-    link = link_tag.get("href", "")
-    if link and not link.startswith("http"):
-        link = f"https://www.monster-strike.com.tw{link}"
-
-    # 2. 取得列表縮圖
-    image_url = ""
-    img_tag = article.select_one("img")
-    if img_tag:
-        image_url = img_tag.get("src") or img_tag.get("data-src") or ""
-        if image_url and not image_url.startswith("http"):
-            image_url = f"https://www.monster-strike.com.tw{image_url}"
-
-    # 3. 取得文章標題並清理雜訊
-    raw_title = link_tag.get_text(strip=True)
-    if not raw_title and img_tag:
-        raw_title = img_tag.get("alt", "")
-    
-    clean_title = re.sub(r"CHECK|NEW|\d{4}\.\d{2}\.\d{2}|活動|重要|維護", "", raw_title)
-    clean_title = re.sub(r"\s+", " ", clean_title).strip()
-    
-    if not clean_title:
-        clean_title = "怪物彈珠最新公告"
-
-    # 4. 點進公告內文抓取簡介大綱 (前 150 字)
-    summary = ""
+# --- 1. 台版官網抓取 ---
+def fetch_tw_news():
     try:
-        detail_res = requests.get(link, headers=headers)
-        detail_res.encoding = "utf-8"
-        detail_soup = BeautifulSoup(detail_res.text, "html.parser")
-        
-        # 抓取內文的主要段落 (p 標籤)
-        paragraphs = detail_soup.select("main p, .article_body p, .news_detail p, #main p")
-        text_list = []
-        for p in paragraphs:
-            text = p.get_text().strip()
-            # 過濾掉空白或太短的裝飾字
-            if text and len(text) > 5 and "monster-strike" not in text:
-                text_list.append(text)
-            if len("\n".join(text_list)) >= 150:
-                break
-        
-        summary = "\n".join(text_list)[:200]  # 限制最大字數在大綱長度
+        res = requests.get(TW_URL, headers=HEADERS, timeout=10)
+        res.encoding = "utf-8"
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        article = soup.select_one(
+            ".news_list_item, .newsList_item, article, .p-newsList__item"
+        )
+        if not article:
+            for a in soup.select("a[href*='/news/']"):
+                if a.get("href", "").endswith(".html") and a.select_one("img"):
+                    article = a
+                    break
+        if not article:
+            return None
+
+        link_tag = (
+            article
+            if article.name == "a"
+            else article.select_one("a[href*='/news/']")
+        )
+        if not link_tag:
+            return None
+
+        link = link_tag.get("href", "")
+        if link and not link.startswith("http"):
+            link = f"https://www.monster-strike.com.tw{link}"
+
+        image_url = ""
+        img_tag = article.select_one("img")
+        if img_tag:
+            image_url = img_tag.get("src") or img_tag.get("data-src") or ""
+            if image_url and not image_url.startswith("http"):
+                image_url = f"https://www.monster-strike.com.tw{image_url}"
+
+        raw_title = link_tag.get_text(strip=True) or (
+            img_tag.get("alt", "") if img_tag else ""
+        )
+        clean_title = re.sub(
+            r"CHECK|NEW|\d{4}\.\d{2}\.\d{2}|活動|重要|維護", "", raw_title
+        )
+        clean_title = re.sub(r"\s+", " ", clean_title).strip() or "怪物彈珠最新公告"
+
+        # 抓取內文摘要
+        summary = ""
+        try:
+            d_res = requests.get(link, headers=HEADERS, timeout=10)
+            d_res.encoding = "utf-8"
+            d_soup = BeautifulSoup(d_res.text, "html.parser")
+            paras = [
+                p.get_text().strip()
+                for p in d_soup.select(
+                    "main p, .article_body p, .news_detail p, #main p"
+                )
+                if len(p.get_text().strip()) > 5
+            ]
+            summary = "\n".join(paras)[:180]
+        except Exception:
+            pass
+
+        return {
+            "type": "TW",
+            "title": clean_title,
+            "link": link,
+            "image_url": image_url,
+            "summary": summary,
+        }
     except Exception as e:
-        print(f"抓取內文大綱失敗: {e}")
+        print(f"台版抓取失敗: {e}")
+        return None
 
-    return {"title": clean_title, "link": link, "image_url": image_url, "summary": summary}
+
+# --- 2. 日版 GameWith 最新活動抓取 ---
+def fetch_gw_events():
+    try:
+        res = requests.get(GW_URL, headers=HEADERS, timeout=10)
+        res.encoding = "utf-8"
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        # 尋找「注目の最新イベント」表格中的第一項重點活動
+        events = []
+        for a in soup.select("table a[href*='/article/show/']"):
+            title = a.get_text(strip=True)
+            link = a.get("href", "")
+            img = a.select_one("img")
+            img_url = img.get("src") if img else ""
+
+            if title and link:
+                events.append(
+                    {"title": title, "link": link, "image_url": img_url}
+                )
+                if len(events) >= 1:  # 抓最最新一個矚目活動
+                    break
+
+        if not events:
+            return None
+
+        top_event = events[0]
+        return {
+            "type": "GW",
+            "title": f"【日版 GameWith 攻略】{top_event['title']}",
+            "link": top_event["link"],
+            "image_url": top_event["image_url"],
+            "summary": "GameWith 注目の最新イベント 攻略頁面已更新！",
+        }
+    except Exception as e:
+        print(f"日版 GameWith 抓取失敗: {e}")
+        return None
 
 
-def get_last_news():
+# --- 快取管理 ---
+def get_cache():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    return None
+    return {"TW": "", "GW": ""}
 
 
-def save_last_news(data):
+def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+        json.dump(cache, f, ensure_ascii=False)
 
 
-def send_discord(title, link, image_url, summary):
+# --- Discord 發送 ---
+def send_discord(data):
     embed = {
-        "title": title,
-        "url": link,
-        "color": 5814783
+        "title": data["title"],
+        "url": data["link"],
+        "color": 5814783 if data["type"] == "TW" else 15105570,
     }
 
-    # 如果有抓到內文大綱，放入 description 欄位
-    if summary:
-        embed["description"] = summary
+    if data.get("summary"):
+        embed["description"] = data["summary"]
 
-    if image_url:
-        embed["image"] = {"url": image_url}
+    if data.get("image_url"):
+        embed["image"] = {"url": data["image_url"]}
 
     payload = {
-        "content": title,
+        "content": data["title"],
         "embeds": [embed],
     }
     requests.post(WEBHOOK_URL, json=payload)
 
 
 if __name__ == "__main__":
-    current_news = fetch_news()
-    if current_news and current_news.get("link"):
-        last_news = get_last_news()
-        if not last_news or last_news.get("link") != current_news["link"]:
-            send_discord(
-                current_news["title"],
-                current_news["link"],
-                current_news.get("image_url", ""),
-                current_news.get("summary", ""),
-            )
-            save_last_news(current_news)
-            print("發送帶內文大綱之公告成功！")
-        else:
-            print("沒有新公告。")
+    cache = get_cache()
+
+    # 1. 檢查台版
+    tw_data = fetch_tw_news()
+    if tw_data and cache.get("TW") != tw_data["link"]:
+        send_discord(tw_data)
+        cache["TW"] = tw_data["link"]
+        print("台版最新公告推播成功！")
+
+    # 2. 檢查日版 GameWith
+    gw_data = fetch_gw_events()
+    if gw_data and cache.get("GW") != gw_data["link"]:
+        send_discord(gw_data)
+        cache["GW"] = gw_data["link"]
+        print("日版 GameWith 最新活動推播成功！")
+
+    save_cache(cache)
