@@ -61,7 +61,6 @@ def fetch_tw_news():
         )
         clean_title = re.sub(r"\s+", " ", clean_title).strip() or "怪物彈珠最新公告"
 
-        # 抓取內文摘要
         summary = ""
         try:
             d_res = requests.get(link, headers=HEADERS, timeout=10)
@@ -90,15 +89,15 @@ def fetch_tw_news():
         return None
 
 
-# --- 2. 日版 GameWith 最新活動抓取 ---
+# --- 2. 日版 GameWith（僅抓取「注目の最新イベント」前兩格超究極）---
 def fetch_gw_events():
     try:
         res = requests.get(GW_URL, headers=HEADERS, timeout=10)
         res.encoding = "utf-8"
         soup = BeautifulSoup(res.text, "html.parser")
 
-        # 尋找「注目の最新イベント」表格中的第一項重點活動
-        events = []
+        # 精準定位「注目の最新イベント」標題旁的表格
+        items = []
         for a in soup.select("table a[href*='/article/show/']"):
             title = a.get_text(strip=True)
             link = a.get("href", "")
@@ -106,26 +105,31 @@ def fetch_gw_events():
             img_url = img.get("src") if img else ""
 
             if title and link:
-                events.append(
+                items.append(
                     {"title": title, "link": link, "image_url": img_url}
                 )
-                if len(events) >= 1:  # 抓最最新一個矚目活動
-                    break
 
-        if not events:
-            return None
+        if not items:
+            return []
 
-        top_event = events[0]
-        return {
-            "type": "GW",
-            "title": f"【日版 GameWith 攻略】{top_event['title']}",
-            "link": top_event["link"],
-            "image_url": top_event["image_url"],
-            "summary": "GameWith 注目の最新イベント 攻略頁面已更新！",
-        }
+        # 僅取前 2 個項目（即超究極卡片）
+        top_2_items = items[:2]
+        results = []
+        for item in top_2_items:
+            results.append(
+                {
+                    "type": "GW",
+                    "title": f"【日版 GameWith 攻略】{item['title']}",
+                    "link": item["link"],
+                    "image_url": item["image_url"],
+                    "summary": f"超究極關卡攻略頁面：{item['title']}",
+                }
+            )
+
+        return results
     except Exception as e:
         print(f"日版 GameWith 抓取失敗: {e}")
-        return None
+        return []
 
 
 # --- 快取管理 ---
@@ -133,7 +137,7 @@ def get_cache():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {"TW": "", "GW": ""}
+    return {"TW": "", "GW": []}
 
 
 def save_cache(cache):
@@ -172,11 +176,16 @@ if __name__ == "__main__":
         cache["TW"] = tw_data["link"]
         print("台版最新公告推播成功！")
 
-    # 2. 檢查日版 GameWith
-    gw_data = fetch_gw_events()
-    if gw_data and cache.get("GW") != gw_data["link"]:
-        send_discord(gw_data)
-        cache["GW"] = gw_data["link"]
-        print("日版 GameWith 最新活動推播成功！")
+    # 2. 檢查日版（僅前兩格）
+    gw_list = fetch_gw_events()
+    gw_cache = cache.get("GW", [])
+    current_gw_links = [item["link"] for item in gw_list]
 
+    # 比對是否有新的超究極連結
+    for gw_data in gw_list:
+        if gw_data["link"] not in gw_cache:
+            send_discord(gw_data)
+            print(f"日版推播成功: {gw_data['title']}")
+
+    cache["GW"] = current_gw_links
     save_cache(cache)
