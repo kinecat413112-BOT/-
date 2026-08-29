@@ -89,7 +89,7 @@ def fetch_tw_news():
         return None
 
 
-# --- 2. 日版 GameWith（精準抓取「注目の最新イベント」前兩格與圖示）---
+# --- 2. 日版 GameWith（抓前兩格超究極，並點進內文抓頂部大圖）---
 def fetch_gw_events():
     try:
         res = requests.get(GW_URL, headers=HEADERS, timeout=10)
@@ -100,24 +100,9 @@ def fetch_gw_events():
         for a in soup.select("table a[href*='/article/show/']"):
             title = a.get_text(strip=True)
             link = a.get("href", "")
-            img = a.select_one("img")
-
-            img_url = ""
-            if img:
-                # 兼容 GameWith 延遲載入圖片屬性
-                img_url = (
-                    img.get("src")
-                    or img.get("data-original")
-                    or img.get("data-src")
-                    or ""
-                )
-                if img_url and not img_url.startswith("http"):
-                    img_url = f"https:{img_url}" if img_url.startswith("//") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{img_url}"
 
             if title and link:
-                items.append(
-                    {"title": title, "link": link, "image_url": img_url}
-                )
+                items.append({"title": title, "link": link})
 
         if not items:
             return []
@@ -125,13 +110,41 @@ def fetch_gw_events():
         # 僅取前 2 個超究極項目
         top_2_items = items[:2]
         results = []
+
         for item in top_2_items:
+            detail_img_url = ""
+            # 點進文章內頁抓取頂部關卡大圖
+            try:
+                d_res = requests.get(item["link"], headers=HEADERS, timeout=10)
+                d_res.encoding = "utf-8"
+                d_soup = BeautifulSoup(d_res.text, "html.parser")
+
+                # 尋找文章主體第一張圖片 (通常是關卡主圖)
+                img = d_soup.select_one(
+                    ".g-article-img img, .article-body img, #article-body img"
+                )
+                if img:
+                    detail_img_url = (
+                        img.get("src")
+                        or img.get("data-original")
+                        or img.get("data-src")
+                        or ""
+                    )
+                    if detail_img_url and not detail_img_url.startswith("http"):
+                        detail_img_url = (
+                            f"https:{detail_img_url}"
+                            if detail_img_url.startswith("//")
+                            else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{detail_img_url}"
+                        )
+            except Exception as e:
+                print(f"進入 GameWith 內頁抓圖片失敗: {e}")
+
             results.append(
                 {
                     "type": "GW",
                     "title": f"【日版 GameWith 攻略】{item['title']}",
                     "link": item["link"],
-                    "image_url": item["image_url"],
+                    "image_url": detail_img_url,
                     "summary": f"超究極關卡攻略頁面：{item['title']}",
                 }
             )
@@ -166,12 +179,9 @@ def send_discord(data):
     if data.get("summary"):
         embed["description"] = data["summary"]
 
+    # 統一使用 Image (大圖模式展示)
     if data.get("image_url"):
-        # 台版使用底圖大圖 (image)，日版 GameWith 角色頭像使用右上方小圖 (thumbnail)
-        if data["type"] == "TW":
-            embed["image"] = {"url": data["image_url"]}
-        else:
-            embed["thumbnail"] = {"url": data["image_url"]}
+        embed["image"] = {"url": data["image_url"]}
 
     payload = {
         "content": data["title"],
@@ -190,7 +200,7 @@ if __name__ == "__main__":
         cache["TW"] = tw_data["link"]
         print("台版最新公告推播成功！")
 
-    # 2. 檢查日版（僅前兩格）
+    # 2. 檢查日版（前兩格超究極，抓取內頁大圖）
     gw_list = fetch_gw_events()
     gw_cache = cache.get("GW", [])
     current_gw_links = [item["link"] for item in gw_list]
