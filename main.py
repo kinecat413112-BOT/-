@@ -81,16 +81,14 @@ def send_discord(title, link, image_url):
     embed = {
         "title": title,
         "url": link,
-        "color": 5814783,
-        "description": f"點擊上方標題查看完整公告內文\n\n{link}"
+        "color": 5814783
     }
 
     if image_url:
         embed["image"] = {"url": image_url}
 
     payload = {
-        # 讓卡片外面的訊息文字直接同步帶入「最新公告標題」
-        "content": f"【怪物彈珠】{title}",
+        "content": title,
         "embeds": [embed],
     }
     requests.post(WEBHOOK_URL, json=payload)
@@ -107,6 +105,6 @@ if __name__ == "__main__":
                 current_news.get("image_url", ""),
             )
             save_last_news(current_news)
-            print("發送新公告與圖片成功！")
+            print("發送極簡版公告成功！")
         else:
             print("沒有新公告。")
