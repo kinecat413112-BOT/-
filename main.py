@@ -19,27 +19,46 @@ def fetch_news():
     response.encoding = "utf-8"
 
     soup = BeautifulSoup(response.text, "html.parser")
-    # 抓取最新一篇新聞區塊
-    news_item = soup.select_one(".news_list_item") or soup.select_one("a[href*='/news/']")
-    if not news_item:
+
+    # 精準定位新聞列表區塊中的第一篇文章
+    article = soup.select_one(".news_list_item, .newsList_item, article, .p-newsList__item")
+    
+    # 備用方案：尋找帶有 html 檔名且包含圖片的內頁連結
+    if not article:
+        for a in soup.select("a[href*='/news/']"):
+            href = a.get("href", "")
+            if href.endswith(".html") and a.select_one("img"):
+                article = a
+                break
+
+    if not article:
         return None
 
-    # 1. 取得文章網址
-    link = news_item.get("href", "")
+    # 1. 取得連結
+    link_tag = article if article.name == "a" else article.select_one("a[href*='/news/']")
+    if not link_tag:
+        return None
+    
+    link = link_tag.get("href", "")
     if link and not link.startswith("http"):
         link = f"https://www.monster-strike.com.tw{link}"
 
-    # 2. 取得標題
-    title = news_item.get_text(strip=True)
-    title = re.sub(r"\s+", " ", title)
-
-    # 3. 抓取公告圖片網址
+    # 2. 取得大圖網址
     image_url = ""
-    img_tag = news_item.select_one("img")
+    img_tag = article.select_one("img")
     if img_tag:
-        image_url = img_tag.get("src", "")
+        image_url = img_tag.get("src") or img_tag.get("data-src") or ""
         if image_url and not image_url.startswith("http"):
             image_url = f"https://www.monster-strike.com.tw{image_url}"
+
+    # 3. 取得完整文章標題
+    title = link_tag.get_text(strip=True)
+    if not title and img_tag:
+        title = img_tag.get("alt", "")
+    
+    title = re.sub(r"\s+", " ", title).strip()
+    if not title:
+        title = "怪物彈珠最新公告"
 
     return {"title": title, "link": link, "image_url": image_url}
 
@@ -61,9 +80,9 @@ def send_discord(title, link, image_url):
         "title": title,
         "url": link,
         "color": 5814783,
+        "description": f"點擊上方標題查看完整公告內文\n\n{link}"
     }
 
-    # 如果有抓到公告圖片，加入大圖欄位
     if image_url:
         embed["image"] = {"url": image_url}
 
