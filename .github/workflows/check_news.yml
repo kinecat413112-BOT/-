@@ -4,20 +4,18 @@ on:
   schedule:
     # 每 5 分鐘自動執行一次
     - cron: '*/5 * * * *'
-  workflow_dispatch: # 支援手動觸發測試
+  workflow_dispatch:
 
 jobs:
   check-news:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Check out repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.x'
 
@@ -29,12 +27,4 @@ jobs:
       - name: Run scraper
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python main.py
-
-      - name: Commit and push if changed
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add last_news.json
-          git commit -m "Update last news cache" || exit 0
-          git push
+        run: python tw.py
