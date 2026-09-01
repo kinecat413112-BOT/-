@@ -3,6 +3,7 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
+# WEBHOOK 密鑰設定
 WEBHOOK_URL = os.environ.get("GW_DISCORD_WEBHOOK") or os.environ.get("DISCORD_WEBHOOK")
 GW_URL = "https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp/"
 CACHE_FILE = "gamewith_news.json"
@@ -13,8 +14,11 @@ HEADERS = {
     )
 }
 
-# 排除無關頁面關鍵字
-EXCLUDE_KEYWORDS = ["一覧", "掲示板", "Q&A", "最強", "リセマラ", "ガチャ", "霸者", "未開"]
+# 排除非關卡攻略的選單連結
+EXCLUDE_KEYWORDS = [
+    "一覧", "掲示板", "Q&A", "最強", "リセマラ", "ガチャ", 
+    "霸者", "未開", "天魔", "記事", "情報", "圖鑑", "回數"
+]
 
 def fetch_gw_collaborations():
     try:
@@ -24,88 +28,71 @@ def fetch_gw_collaborations():
 
         results = []
 
-        # 1. 尋找「最新クエスト」標題
-        target_table = None
-        for heading in soup.find_all(["h2", "h3", "div"]):
-            if "最新クエスト" in heading.get_text():
-                # 尋找該標題下方的第一個 table 表格
-                parent = heading.find_parent(["div", "section"]) or heading.parent
-                if parent:
-                    target_table = parent.find("table")
-                break
+        # 直接搜尋全頁帶有「攻略」二字的關鍵連結
+        for a_tag in soup.find_all("a", href=True):
+            href = a_tag["href"]
+            text = a_tag.get_text(strip=True)
 
-        # 如果沒找到對應區塊，退而求其次找頁面中第一個 table
-        if not target_table:
-            target_table = soup.find("table")
-
-        if not target_table:
-            print("未找到最新關卡表格！")
-            return []
-
-        # 2. 遍歷表格中的每一個儲存格 (td)
-        for td in target_table.find_all("td"):
-            links = td.find_all("a[href*='/article/show/']")
-            if not links:
-                continue
-
-            # 提取角色名稱與攻略連結
-            char_name = ""
-            quest_link = ""
-            quest_text = ""
-
-            for a in links:
-                text = a.get_text(strip=True)
-                href = a.get("href", "")
-
+            if "/article/show/" in href and "攻略" in text:
+                # 過濾掉非關卡的選單連結
                 if any(ex in text for ex in EXCLUDE_KEYWORDS):
                     continue
 
-                if "攻略" in text:
-                    quest_link = href
-                    quest_text = text
-                else:
-                    char_name = text
+                full_link = href if href.startswith("http") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{href}"
 
-            if quest_link:
-                if not quest_link.startswith("http"):
-                    quest_link = f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{quest_link}"
+                # 避免重複抓取
+                if any(item["link"] == full_link for item in results):
+                    continue
 
-                # 組合標題
-                display_title = f"{char_name} 【{quest_text}】" if char_name else quest_text
+                # 嘗試抓取角色名稱（同個表格儲存格內的文字）
+                char_name = ""
+                parent_td = a_tag.find_parent("td")
+                if parent_td:
+                    names = [
+                        t.get_text(strip=True)
+                        for t in parent_td.find_all("a")
+                        if "攻略" not in t.get_text() and not any(ex in t.get_text() for ex in EXCLUDE_KEYWORDS)
+                    ]
+                    if names:
+                        char_name = names[0]
 
-                # 點進內頁抓取完整大圖與詳細標題
-                detail_title = display_title
+                display_title = f"{char_name} 【{text}】" if char_name else text
                 detail_img_url = ""
+
+                # 點進內頁獲取完整標題與關卡大圖
                 try:
-                    d_res = requests.get(quest_link, headers=HEADERS, timeout=5)
+                    d_res = requests.get(full_link, headers=HEADERS, timeout=5)
                     d_res.encoding = "utf-8"
                     d_soup = BeautifulSoup(d_res.text, "html.parser")
 
                     title_tag = d_soup.select_one("h1, .g-article-title")
                     if title_tag:
-                        detail_title = title_tag.get_text(strip=True)
+                        display_title = title_tag.get_text(strip=True)
 
                     img = d_soup.select_one(".g-article-img img, .article-body img, #article-body img")
                     if img:
-                        detail_img_url = img.get("src") or img.get("data-original") or img.get("data-src") or ""
-                        if detail_img_url and not detail_img_url.startswith("http"):
-                            detail_img_url = f"https:{detail_img_url}" if detail_img_url.startswith("//") else f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{detail_img_url}"
+                        img_src = img.get("src") or img.get("data-original") or img.get("data-src") or ""
+                        if img_src:
+                            if img_src.startswith("//"):
+                                detail_img_url = f"https:{img_src}"
+                            elif not img_src.startswith("http"):
+                                detail_img_url = f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{img_src}"
+                            else:
+                                detail_img_url = img_src
                 except Exception as e:
-                    print(f"內頁解析失敗 [{quest_link}]: {e}")
+                    print(f"內頁解析失敗 [{full_link}]: {e}")
 
-                if not any(item["link"] == quest_link for item in results):
-                    results.append({
-                        "title": f"【日版 GameWith】{detail_title}",
-                        "link": quest_link,
-                        "image_url": detail_img_url
-                    })
+                results.append({
+                    "title": f"【日版 GameWith】{display_title}",
+                    "link": full_link,
+                    "image_url": detail_img_url
+                })
 
-        print(f"成功精準抓取到 {len(results)} 個最新關卡攻略！")
+        print(f"成功抓取到 {len(results)} 個關卡攻略！")
         return results
     except Exception as e:
         print(f"日版 GameWith 抓取失敗: {e}")
         return []
-
 
 def get_cache():
     if os.path.exists(CACHE_FILE):
@@ -116,11 +103,9 @@ def get_cache():
             return []
     return []
 
-
 def save_cache(cache):
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(cache, f, ensure_ascii=False)
-
+        json.dump(cache, f, ensure_ascii=False, indent=2)
 
 def send_discord(data):
     if not WEBHOOK_URL:
@@ -148,15 +133,17 @@ def send_discord(data):
     except Exception as e:
         print(f"Discord 發送失敗: {e}")
 
-
 if __name__ == "__main__":
     cache = get_cache()
     gw_list = fetch_gw_collaborations()
 
     current_links = [item["link"] for item in gw_list]
 
-    # 過濾未推送過的新關卡，若無快取則發送最新 5 筆
-    items_to_send = [item for item in gw_list if item["link"] not in cache] or gw_list[:5]
+    # 過濾未推送過的新關卡，若是第一次執行（或快取被清空）則發送最新 5 筆
+    items_to_send = [item for item in gw_list if item["link"] not in cache]
+    
+    if not cache and gw_list:
+        items_to_send = gw_list[:5]
 
     for gw_data in items_to_send[:5]:
         send_discord(gw_data)
