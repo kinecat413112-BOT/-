@@ -3,8 +3,8 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
-# 修復：優先從 DISCORD_WEBHOOK 讀取網址（對應 check_gamewith.yml 的設定）
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK") or os.environ.get("GW_DISCORD_WEBHOOK")
+# 精準對應 Secrets 名稱：GW_DISCORD_WEBHOOK
+WEBHOOK_URL = os.environ.get("GW_DISCORD_WEBHOOK") or os.environ.get("DISCORD_WEBHOOK")
 GW_URL = "https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp/"
 CACHE_FILE = "gamewith_news.json"
 
@@ -23,7 +23,7 @@ def fetch_gw_collaborations():
 
         results = []
 
-        # 搜尋頁面中含有「最新クエスト」的標題區塊
+        # 定位「最新クエスト」區塊
         target_section = None
         for heading in soup.find_all(["h2", "h3", "div"]):
             if "最新クエスト" in heading.get_text():
@@ -32,7 +32,7 @@ def fetch_gw_collaborations():
 
         search_scope = target_section if target_section else soup
 
-        # 抓取表格內所有包含「攻略」的連結
+        # 解析關卡攻略連結
         for a_tag in search_scope.select("a[href*='/article/show/']"):
             link_text = a_tag.get_text(strip=True)
 
@@ -44,6 +44,7 @@ def fetch_gw_collaborations():
                 if not link.startswith("http"):
                     link = f"https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp{link}"
 
+                # 嘗試取得角色名稱
                 char_name = ""
                 parent_td = a_tag.find_parent("td")
                 if parent_td:
@@ -59,6 +60,8 @@ def fetch_gw_collaborations():
                     f"{char_name} 【{link_text}】" if char_name else link_text
                 )
                 detail_img_url = ""
+
+                # 抓取關卡內頁標題與封面圖
                 try:
                     d_res = requests.get(link, headers=HEADERS, timeout=5)
                     d_res.encoding = "utf-8"
@@ -122,7 +125,7 @@ def save_cache(cache):
 
 def send_discord(data):
     if not WEBHOOK_URL:
-        print("錯誤：找不到 WEBHOOK_URL 密鑰，請確認 Secrets 設定！")
+        print("錯誤：找不到 GW_DISCORD_WEBHOOK 密鑰，請確認 Secrets 設定！")
         return
 
     embed = {
@@ -153,7 +156,7 @@ if __name__ == "__main__":
 
     current_links = [item["link"] for item in gw_list]
 
-    # 過濾未發送過的新攻略（若沒有快取則發送前 5 筆）
+    # 過濾未發送過的新攻略（若無快取則發送最新 5 筆）
     items_to_send = [
         item for item in gw_list if item["link"] not in cache
     ] or gw_list[:5]
