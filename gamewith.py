@@ -3,7 +3,8 @@ import os
 import requests
 from bs4 import BeautifulSoup
 
-WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK")
+# 自動相容 DISCORD_WEBHOOK 或 GW_DISCORD_WEBHOOK
+WEBHOOK_URL = os.environ.get("GW_DISCORD_WEBHOOK") or os.environ.get("DISCORD_WEBHOOK")
 GW_URL = "https://xn--eckwa2aa3a9c8j8bve9d.gamewith.jp/"
 CACHE_FILE = "gamewith_news.json"
 
@@ -80,8 +81,11 @@ def fetch_gw_collaborations():
 
 def get_cache():
     if os.path.exists(CACHE_FILE):
-        with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
     return []
 
 
@@ -91,6 +95,10 @@ def save_cache(cache):
 
 
 def send_discord(data):
+    if not WEBHOOK_URL:
+        print("未找到 Discord Webhook 網址，跳過發送。")
+        return
+
     embed = {
         "title": data["title"],
         "url": data["link"],
@@ -104,7 +112,12 @@ def send_discord(data):
         "content": data["title"],
         "embeds": [embed],
     }
-    requests.post(WEBHOOK_URL, json=payload)
+    
+    try:
+        res = requests.post(WEBHOOK_URL, json=payload, timeout=10)
+        res.raise_for_status()
+    except Exception as e:
+        print(f"Discord 發送失敗: {e}")
 
 
 if __name__ == "__main__":
